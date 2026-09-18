@@ -1,7 +1,7 @@
-//! `ltb-host` command-line entry point.
+//! `ltb-host` 命令行入口。
 //!
-//! All real logic lives in the `ltb_host` library so the GUI can embed it; this
-//! file only parses arguments and wires the chosen mode together.
+//! 主要逻辑都放在 `ltb_host` Library 中，便于 GUI 直接复用；
+//! 本文件只负责解析参数并组装所选运行模式。
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -13,49 +13,49 @@ use ltb_host::{
 };
 
 #[derive(Parser, Debug)]
-#[command(name = "ltb-host", about = "Local MCP tool bridge", version)]
+#[command(name = "ltb-host", about = "本地 MCP 工具桥接", version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Port for the loopback HTTP and WebSocket transports. 0 picks a free port.
+    /// loopback HTTP 与 WebSocket 传输使用的端口；0 表示自动选择空闲端口。
     #[arg(long, default_value_t = 8788, global = true)]
     port: u16,
 
-    /// Port for the MCP transport. 0 picks a free port.
+    /// MCP 传输使用的端口；0 表示自动选择空闲端口。
     #[arg(long, default_value_t = 8789, global = true)]
     mcp_port: u16,
 
-    /// Address for `serve-mcp`. The default preserves loopback-only behavior.
+    /// `serve-mcp` 的监听地址；默认值保持仅 loopback 行为。
     #[arg(long, default_value = "127.0.0.1", global = true)]
     mcp_bind: IpAddr,
 
-    /// Static Bearer token file for Direct Remote MCP.
+    /// Direct Remote MCP 使用的静态 Bearer Token 文件。
     #[arg(long, global = true)]
     mcp_bearer_token_file: Option<PathBuf>,
 
-    /// Path to the policy document. Defaults to the per-user config directory.
+    /// 策略文档路径；默认使用当前用户配置目录。
     #[arg(long, global = true)]
     policy: Option<PathBuf>,
 
-    /// Disable the on-disk audit log.
+    /// 禁用磁盘审计日志。
     #[arg(long, global = true)]
     no_audit: bool,
 
-    /// Print the bridge secret to stdout and exit.
+    /// 把 Bridge Secret 输出到 stdout 后退出。
     #[arg(long)]
     print_secret: bool,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Serve the loopback HTTP transport (default).
+    /// 启动 loopback HTTP 传输（默认）。
     Serve,
-    /// Serve the loopback WebSocket transport.
+    /// 启动 loopback WebSocket 传输。
     ServeWs,
-    /// Serve the loopback MCP (Model Context Protocol) transport.
+    /// 启动 loopback MCP（Model Context Protocol）传输。
     ServeMcp,
-    /// Print the effective policy as JSON and exit.
+    /// 以 JSON 输出最终生效的策略后退出。
     DumpPolicy,
 }
 
@@ -79,7 +79,7 @@ async fn main() -> std::process::ExitCode {
                 std::process::ExitCode::SUCCESS
             }
             Err(error) => {
-                eprintln!("failed to load the bridge secret: {error}");
+                eprintln!("读取 Bridge Secret 失败: {error}");
                 std::process::ExitCode::FAILURE
             }
         };
@@ -93,7 +93,7 @@ async fn main() -> std::process::ExitCode {
                 std::process::ExitCode::SUCCESS
             }
             Err(error) => {
-                eprintln!("failed to serialise the policy: {error}");
+                eprintln!("序列化策略失败: {error}");
                 std::process::ExitCode::FAILURE
             }
         };
@@ -102,7 +102,7 @@ async fn main() -> std::process::ExitCode {
     let dispatcher = match build_dispatcher(cli.policy.clone(), !cli.no_audit).await {
         Ok(dispatcher) => dispatcher,
         Err(error) => {
-            eprintln!("failed to start the bridge: {error}");
+            eprintln!("启动 Bridge 失败: {error}");
             return std::process::ExitCode::FAILURE;
         }
     };
@@ -114,7 +114,7 @@ async fn main() -> std::process::ExitCode {
             let secret = match load_or_create_secret() {
                 Ok(secret) => secret,
                 Err(error) => {
-                    eprintln!("failed to load the bridge secret: {error}");
+                    eprintln!("读取 Bridge Secret 失败: {error}");
                     return std::process::ExitCode::FAILURE;
                 }
             };
@@ -130,19 +130,19 @@ async fn main() -> std::process::ExitCode {
                 } else {
                     let Some(token_file) = cli.mcp_bearer_token_file.as_ref() else {
                         eprintln!(
-                            "--mcp-bearer-token-file is required when Direct Remote MCP is requested"
+                            "启用 Direct Remote MCP 时必须提供 --mcp-bearer-token-file"
                         );
                         return std::process::ExitCode::FAILURE;
                     };
                     let token = match std::fs::read_to_string(token_file) {
                         Ok(token) if !token.trim().is_empty() => token.trim().to_string(),
                         Ok(_) => {
-                            eprintln!("MCP bearer token file is empty: {}", token_file.display());
+                            eprintln!("MCP Bearer Token 文件为空: {}", token_file.display());
                             return std::process::ExitCode::FAILURE;
                         }
                         Err(error) => {
                             eprintln!(
-                                "failed to read MCP bearer token file {}: {error}",
+                                "读取 MCP Bearer Token 文件失败 {}: {error}",
                                 token_file.display()
                             );
                             return std::process::ExitCode::FAILURE;
@@ -165,32 +165,32 @@ async fn main() -> std::process::ExitCode {
                 Ok(address) => address,
                 Err(error) => {
                     let port = if serve_mcp { cli.mcp_port } else { cli.port };
-                    eprintln!("failed to bind the selected transport on port {port}: {error}");
+                    eprintln!("绑定所选传输端口失败 {port}: {error}");
                     return std::process::ExitCode::FAILURE;
                 }
             };
 
-            // Printed once at startup so a user running the host by hand can
-            // paste the token into an MCP client. Never logged by a transport.
+            // 启动时只输出一次，方便手动运行 Host 的用户
+            // 把 Token 粘贴到 MCP 客户端；传输层永远不会记录该值。
             if serve_mcp {
-                println!("ltb-host MCP listening on http://{address}/mcp");
+                println!("ltb-host MCP 正在监听 http://{address}/mcp");
             } else if serve_websocket {
-                println!("ltb-host listening on ws://{address}");
+                println!("ltb-host 正在监听 ws://{address}");
             } else {
-                println!("ltb-host listening on http://{address}/rpc");
+                println!("ltb-host 正在监听 http://{address}/rpc");
             }
             if serve_mcp && cli.mcp_bearer_token_file.is_some() {
-                println!("MCP authentication: static Bearer token");
+                println!("MCP 认证：静态 Bearer Token");
             } else {
-                println!("bridge secret: {secret}");
+                println!("Bridge Secret： {secret}");
             }
-            println!("press Ctrl+C to stop");
+            println!("按 Ctrl+C 停止");
 
             if let Err(error) = tokio::signal::ctrl_c().await {
-                tracing::error!(%error, "failed to listen for Ctrl+C");
+                tracing::error!(%error, "监听 Ctrl+C 失败");
                 return std::process::ExitCode::FAILURE;
             }
-            tracing::info!("shutting down");
+            tracing::info!("正在关闭");
         }
     }
 

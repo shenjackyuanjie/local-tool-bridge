@@ -1,15 +1,15 @@
-//! The RPC dispatcher.
+//! RPC 调度器。
 //!
-//! This is the single place a tool call is turned into an execution. It owns the
-//! full sequence, in order:
+//! 这里是工具调用进入执行阶段的唯一入口，负责完整流程：
+//! 按以下顺序处理：
 //!
-//! 1. Validate the tool exists and the arguments match its schema.
-//! 2. Evaluate policy → `allow` / `ask` / `deny`.
-//! 3. On `ask`, raise an approval challenge and wait for a human.
-//! 4. Execute, truncate the output, and record an audit entry.
+//! 1. 校验工具是否存在，以及参数是否符合 Schema。
+//! 2. 执行策略判定 → `allow` / `ask` / `deny`。
+//! 3. 遇到 `ask` 时发起审批并等待用户决定。
+//! 4. 执行工具、按限制截断输出并写入审计记录。
 //!
-//! Keeping this sequence in one function is deliberate: split across callers,
-//! one of them eventually forgets the policy check.
+//! 故意把这条链路集中在一个函数里，避免拆到多个调用方之后
+//! 某条路径遗漏策略检查。
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,7 +23,7 @@ use crate::policy::{Effect, Policy, PolicyEngine, Verdict};
 use crate::rpc::{Incoming, JsonRpcFailure, JsonRpcSuccess, PROTOCOL_VERSION};
 use crate::tools::{ReadBeforeWriteTracker, ToolContext, ToolRegistry};
 
-/// Methods a client may invoke.
+/// 客户端可调用的方法。
 pub mod method {
     pub const HELLO: &str = "bridge.hello";
     pub const PING: &str = "bridge.ping";
@@ -33,7 +33,7 @@ pub mod method {
     pub const POLICY_SET: &str = "policy.set";
 }
 
-/// Notifications the host pushes to connected clients.
+/// Host 主动推送给已连接客户端的通知。
 pub mod notification {
     pub const POLICY_CHANGED: &str = "bridge.policyChanged";
     pub const SHUTTING_DOWN: &str = "bridge.shuttingDown";
@@ -41,26 +41,26 @@ pub mod notification {
     pub const CALL_FINISHED: &str = "tools.callFinished";
 }
 
-/// How long an approval prompt stays valid before it expires.
+/// 审批请求在过期前保持有效的时长。
 const APPROVAL_TTL: Duration = Duration::from_secs(180);
 
-/// How the dispatcher asks a human for a decision.
+/// 调度器向用户请求决定的接口。
 ///
-/// The GUI implements this by showing a modal; a headless host implements it by
-/// refusing, which is the correct fail-closed behaviour.
+/// GUI 通过弹窗实现；无界面的 Host 则直接拒绝，
+/// 以保持默认拒绝（fail-closed）的安全行为。
 #[async_trait::async_trait]
 pub trait Approver: Send + Sync {
-    /// Presents a challenge and resolves with the human's decision.
+    /// 展示审批请求并返回用户的决定。
     ///
-    /// Returning `None` means "no human is available"; the dispatcher turns that
-    /// into a denial rather than an allow.
+    /// 返回 `None` 表示当前没有用户可以处理审批；调度器会把它
+    /// 转换为拒绝，而不是默认允许。
     async fn request(&self, challenge: &ApprovalChallenge) -> Option<ApprovalDecision>;
 
-    /// Whether a human can actually be reached right now.
+    /// 当前是否确实能够联系到用户。
     fn is_interactive(&self) -> bool;
 }
 
-/// A pending approval request.
+/// 一个待处理的审批请求。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalChallenge {
@@ -70,19 +70,19 @@ pub struct ApprovalChallenge {
     pub reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub matched_rule: Option<String>,
-    /// Epoch milliseconds after which the challenge is void.
+    /// 审批请求失效的 Unix Epoch 毫秒时间戳。
     pub expires_at: u64,
 }
 
-/// A human's answer.
+/// 用户的审批结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ApprovalDecision {
     pub approved: bool,
-    /// When true, the host persists a rule so the same call is not asked again.
+    /// 为 true 时，Host 会持久化规则，避免同类调用再次询问。
     pub remember: bool,
 }
 
-/// An `Approver` that always declines, used by tests and headless runs.
+/// 始终拒绝的 `Approver`，用于测试与无界面运行。
 pub struct DenyAllApprover;
 
 #[async_trait::async_trait]
@@ -96,32 +96,32 @@ impl Approver for DenyAllApprover {
     }
 }
 
-/// Who is on the other end of a transport, as far as the transport can prove.
+/// 从传输层可验证信息来看，对端的可信身份。
 ///
-/// This is supplied by the *transport*, never by the message body: a peer that
-/// could assert its own trustworthiness over the wire would defeat the point.
+/// 该信息必须由*传输层*提供，绝不能信任消息体自行声明；否则对端
+/// 可以自行宣称可信，整个认证机制就失去意义。
 ///
-/// The caller must prove itself with the shared secret in `bridge.hello`.
-/// Every loopback transport sets this: any local process can open a socket, so
-/// possession of the token is the actual authorisation.
+/// 调用方必须在 `bridge.hello` 中使用共享 Secret 证明身份。
+/// 所有 loopback 传输都启用该要求：本机任意进程都能打开 Socket，
+/// 因此真正的授权凭证是 Token 本身。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerTrust {
     Untrusted,
 }
 
-/// The host's shared state.
+/// Host 的共享状态。
 pub struct Dispatcher {
     registry: Arc<ToolRegistry>,
     policy: RwLock<PolicyEngine>,
     audit: Arc<AuditLog>,
     approver: RwLock<Arc<dyn Approver>>,
-    /// Set once the handshake succeeds.
+    /// 握手成功后置为 true。
     authenticated: RwLock<bool>,
-    /// Expected shared secret for the WebSocket transport.
+    /// WebSocket 传输期望的共享 Secret。
     secret: Option<String>,
-    /// Notifications the host wants to push, as a broadcast channel.
+    /// Host 要主动推送的通知，通过广播通道分发。
     events: tokio::sync::broadcast::Sender<Value>,
-    /// Successful read_file observations used to guard structured file writes.
+    /// 成功的 `read_file` 读取记录，用于保护结构化文件写入。
     read_tracker: ReadBeforeWriteTracker,
 }
 
@@ -145,12 +145,12 @@ impl Dispatcher {
         }))
     }
 
-    /// Replaces the approver, which the GUI does once its window exists.
+    /// 替换审批器；GUI 窗口创建完成后会调用。
     pub async fn set_approver(&self, approver: Arc<dyn Approver>) {
         *self.approver.write().await = approver;
     }
 
-    /// Subscribes to host-originated notifications.
+    /// 订阅 Host 主动发出的通知。
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Value> {
         self.events.subscribe()
     }
@@ -171,7 +171,7 @@ impl Dispatcher {
         self.read_tracker.clear_scope(scope);
     }
 
-    /// Swaps in a new policy document, bumping its revision.
+    /// 替换策略文档并递增 revision。
     pub async fn replace_policy(&self, mut policy: Policy) -> Result<u64> {
         let revision = self.policy.read().await.policy().revision + 1;
         policy.revision = revision;
@@ -186,16 +186,16 @@ impl Dispatcher {
         Ok(revision)
     }
 
-    /// Handles one inbound envelope, returning an optional reply.
+    /// 处理一个入站 Envelope，并按需返回响应。
     ///
-    /// `trust` describes what the transport has already proven about the peer;
-    /// see [`PeerTrust`].
+    /// `trust` 表示传输层已经证明的对端身份信息；
+    /// 详见 [`PeerTrust`]。
     pub async fn handle(&self, message: Incoming, trust: PeerTrust) -> Option<Value> {
         let request = match message {
             Incoming::Request(request) => request,
-            // Responses to host-originated requests are handled elsewhere.
+            // Host 主动请求对应的响应由其他路径处理。
             Incoming::Notification(note) => {
-                tracing::debug!(method = %note.method, "ignoring inbound notification");
+                tracing::debug!(method = %note.method, "忽略入站 Notification");
                 return None;
             }
             Incoming::Response(_) => return None,
@@ -212,7 +212,7 @@ impl Dispatcher {
         })
     }
 
-    /// Routes a method name to its handler.
+    /// 按方法名路由到对应处理器。
     async fn dispatch(
         &self,
         method: &str,
@@ -231,11 +231,11 @@ impl Dispatcher {
         }
     }
 
-    /// The handshake. Also the only method callable before authentication.
+    /// 握手方法，也是认证前唯一允许调用的方法。
     async fn handle_hello(&self, params: Option<Value>, trust: PeerTrust) -> Result<Value> {
         let params = params.unwrap_or_else(|| json!({}));
 
-        // A transport-verified peer skips the secret entirely; see `PeerTrust`.
+        // 已由传输层验证的对端无需再次校验 Secret；详见 `PeerTrust`。
         if trust == PeerTrust::Untrusted {
             if let Some(expected) = &self.secret {
                 let provided = params
@@ -257,8 +257,8 @@ impl Dispatcher {
             .and_then(Value::as_str)
             .unwrap_or_default();
 
-        // Only the major version must agree: a patch difference is not worth
-        // breaking a working session over.
+        // 只要求主版本一致；补丁版本差异不值得
+        // 破坏一个原本可用的会话。
         if !peer_protocol.is_empty() && major_of(peer_protocol) != major_of(PROTOCOL_VERSION) {
             return Err(BridgeError::new(
                 code::PROTOCOL_MISMATCH,
@@ -298,14 +298,14 @@ impl Dispatcher {
         }))
     }
 
-    /// Validates, authorises, and executes one tool call.
+    /// 校验、授权并执行一次工具调用。
     async fn handle_tools_call(&self, params: Option<Value>) -> Result<Value> {
-        let params = params.ok_or_else(|| BridgeError::invalid_params("Missing `params`"))?;
+        let params = params.ok_or_else(|| BridgeError::invalid_params("缺少 `params`"))?;
 
         let name = params
             .get("name")
             .and_then(Value::as_str)
-            .ok_or_else(|| BridgeError::invalid_params("Missing `name`"))?
+            .ok_or_else(|| BridgeError::invalid_params("缺少 `name`"))?
             .to_string();
 
         let arguments = params
@@ -331,11 +331,11 @@ impl Dispatcher {
         let tool = self.registry.require(&name)?;
         let descriptor = tool.descriptor();
 
-        // Step 1: validate arguments against the declared schema before anything
-        // else runs, so a malformed call never reaches policy or execution.
+        // 第 1 步：先按声明的 Schema 校验参数，确保任何其他逻辑执行前
+        // 就拒绝格式错误的调用，不让其进入策略或执行阶段。
         validate_arguments(&descriptor.input_schema, &arguments)?;
 
-        // Step 2: policy.
+        // 第 2 步：策略判定。
         let verdict = {
             let policy = self.policy.read().await;
             policy.evaluate(&name, &arguments, descriptor.default_effect.into())
@@ -386,7 +386,7 @@ impl Dispatcher {
                         .await;
                         return Err(BridgeError::new(
                             code::TOOL_DENIED,
-                            format!("The user declined to run `{name}`"),
+                            format!("用户拒绝执行 `{name}`"),
                         ));
                     }
                     None => {
@@ -415,8 +415,8 @@ impl Dispatcher {
         };
         let _ = approved_via_human;
 
-        // Step 4: execute. The policy guard must stay alive for the whole call,
-        // because `ToolContext` borrows the engine that does path confinement.
+        // 第 4 步：执行。整个调用期间都必须保持 policy guard 存活，
+        // 因为 `ToolContext` 借用了负责路径约束的策略引擎。
         let policy_guard = self.policy.read().await;
         let (max_output, timeout) = (
             policy_guard.max_output_chars(),
@@ -480,7 +480,7 @@ impl Dispatcher {
                 )
                 .await;
                 return Err(BridgeError::timeout(format!(
-                    "`{name}` exceeded the {timeout:?} host limit"
+                    "`{name}` 超过 Host 的 {timeout:?} 超时限制"
                 )));
             }
         };
@@ -507,18 +507,18 @@ impl Dispatcher {
     }
 
     async fn handle_policy_set(&self, params: Option<Value>) -> Result<Value> {
-        let params = params.ok_or_else(|| BridgeError::invalid_params("Missing `params`"))?;
+        let params = params.ok_or_else(|| BridgeError::invalid_params("缺少 `params`"))?;
         let policy: Policy =
             serde_json::from_value(params.get("policy").cloned().unwrap_or(params.clone()))
                 .map_err(|error| {
-                    BridgeError::invalid_params(format!("Invalid policy document: {error}"))
+                    BridgeError::invalid_params(format!("策略文档无效：{error}"))
                 })?;
 
         let revision = self.replace_policy(policy).await?;
         Ok(json!({ "revision": revision }))
     }
 
-    /// Raises a challenge and waits for the approver.
+    /// 发起审批请求并等待审批结果。
     async fn request_approval(
         &self,
         name: &str,
@@ -527,8 +527,8 @@ impl Dispatcher {
     ) -> Option<ApprovalDecision> {
         let approver = self.approver.read().await.clone();
 
-        // With no human reachable, `ask` must fail closed. This is the branch
-        // that keeps a headless host from silently becoming an allow-all.
+        // 无法联系用户时，`ask` 必须默认拒绝。这条分支
+        // 防止无界面 Host 静默退化为全部允许。
         if !approver.is_interactive() {
             return None;
         }
@@ -549,13 +549,13 @@ impl Dispatcher {
             .flatten()
     }
 
-    /// Persists an allow rule for a call the user chose to remember.
+    /// 为用户选择“记住”的调用持久化允许规则。
     async fn remember_rule(&self, name: &str, arguments: &Value) {
         let mut policy = self.policy_snapshot().await;
-        let note = format!("Auto-added when the user approved `{name}` once and chose to remember");
+        let note = format!("用户允许执行 `{name}` 并选择记住后自动添加");
 
-        // A filesystem call is remembered for the directory it touched, not for
-        // the whole filesystem: approving one file must not open the rest.
+        // 文件系统调用只按其访问的目录记忆，而不是
+        // 放开整个文件系统：允许一个文件不应顺带开放其他位置。
         let when = if let Some(path) = arguments.get("path").and_then(Value::as_str) {
             std::path::Path::new(path)
                 .parent()
@@ -586,7 +586,7 @@ impl Dispatcher {
         );
 
         if let Err(error) = self.replace_policy(policy).await {
-            tracing::warn!(%error, "failed to persist remembered approval");
+            tracing::warn!(%error, "持久化已记住的审批规则失败");
         }
     }
 
@@ -619,7 +619,7 @@ impl Dispatcher {
     }
 }
 
-/// Extracts the major component of a semantic version.
+/// 提取语义化版本的主版本号。
 fn major_of(version: &str) -> &str {
     version.split('.').next().unwrap_or(version)
 }
@@ -631,30 +631,30 @@ fn now_epoch_millis() -> u64 {
         .unwrap_or(0)
 }
 
-/// Validates arguments against the JSON Schema subset the catalogue uses.
+/// 按工具目录实际使用的 JSON Schema 子集校验参数。
 ///
-/// This is intentionally not a full JSON Schema implementation: it checks types
-/// and required fields, which is exactly what the catalogue expresses. Richer
-/// constraints (ranges, enums) are clamped by the tools themselves.
+/// 这里刻意不实现完整 JSON Schema：只检查类型
+/// 与必填字段，这正好覆盖当前工具目录的表达能力。更复杂的
+/// 约束（范围、枚举等）由具体工具自身处理。
 pub fn validate_arguments(schema: &crate::tools::ObjectSchema, arguments: &Value) -> Result<()> {
     let object = arguments
         .as_object()
-        .ok_or_else(|| BridgeError::invalid_params("`arguments` must be a JSON object"))?;
+        .ok_or_else(|| BridgeError::invalid_params("`arguments` 必须是 JSON 对象"))?;
 
     for required in &schema.required {
         if !object.contains_key(required) {
             return Err(BridgeError::invalid_params(format!(
-                "Missing required argument `{required}`"
+                "缺少必填参数 `{required}`"
             )));
         }
     }
 
     for (key, value) in object {
         let Some(expected) = schema.properties.get(key) else {
-            // Unknown keys are rejected rather than ignored: a silently dropped
-            // `path` typo is how a tool ends up running with the wrong target.
+            // 未知字段直接拒绝而不是静默忽略：如果悄悄丢弃一个拼错的
+            // `path`，工具就可能在错误目标上运行。
             return Err(BridgeError::invalid_params(format!(
-                "Unknown argument `{key}`"
+                "未知参数 `{key}`"
             )));
         };
         let Some(kind) = expected.get("type").and_then(Value::as_str) else {
@@ -673,14 +673,14 @@ pub fn validate_arguments(schema: &crate::tools::ObjectSchema, arguments: &Value
 
         if !matches {
             return Err(BridgeError::invalid_params(format!(
-                "Argument `{key}` must be of type {kind}"
+                "参数 `{key}` 必须是 {kind} 类型"
             )));
         }
 
         if let Some(allowed) = expected.get("enum").and_then(Value::as_array) {
             if !allowed.contains(value) {
                 return Err(BridgeError::invalid_params(format!(
-                    "Argument `{key}` must be one of {}",
+                    "参数 `{key}` 必须是以下值之一：{}",
                     allowed
                         .iter()
                         .map(|v| v.to_string())

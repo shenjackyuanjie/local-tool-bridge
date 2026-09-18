@@ -1,8 +1,8 @@
-//! Codex-compatible tool schemas layered on top of the existing bridge tools.
+//! 基于现有 Bridge 工具封装的 Codex 兼容工具 Schema。
 //!
-//! The implementations deliberately delegate to the existing filesystem/shell
-//! tools wherever the semantics overlap. This keeps policy, sandboxing, audit,
-//! output limits, and platform shell selection in one place.
+//! 能复用的语义都刻意委托给现有文件系统 / Shell 工具，
+//! 从而让策略、沙箱、审计、输出限制
+//! 与平台 Shell 选择都只维护一套实现。
 
 use std::time::Instant;
 
@@ -20,7 +20,7 @@ fn object_schema(properties: Value, required: &[&str]) -> super::ObjectSchema {
     }
 }
 
-/// A thin compatibility wrapper for Codex's `read_file` schema.
+/// Codex `read_file` Schema 的轻量兼容包装。
 pub struct ReadFile;
 
 #[async_trait::async_trait]
@@ -28,9 +28,9 @@ impl Tool for ReadFile {
     fn descriptor(&self) -> ToolDescriptor {
         let mut descriptor = super::fs::ReadFile.descriptor();
         descriptor.name = "read_file".into();
-        descriptor.summary = "Read a UTF-8 text file from disk (Codex schema)".into();
+        descriptor.summary = "从磁盘读取 UTF-8 文本文件（Codex Schema）".into();
         descriptor.description =
-            "Reads a file using the bridge's existing filesystem sandbox and encoding support."
+            "使用 Bridge 现有的文件系统沙箱与编码支持读取文件。"
                 .into();
         descriptor.category = "codex-filesystem".into();
         descriptor
@@ -41,7 +41,7 @@ impl Tool for ReadFile {
     }
 }
 
-/// A thin compatibility wrapper for Codex's `list_dir` schema.
+/// Codex `list_dir` Schema 的轻量兼容包装。
 pub struct ListDir;
 
 #[async_trait::async_trait]
@@ -49,9 +49,9 @@ impl Tool for ListDir {
     fn descriptor(&self) -> ToolDescriptor {
         let mut descriptor = super::fs::ListDir.descriptor();
         descriptor.name = "list_dir".into();
-        descriptor.summary = "List directory entries (Codex schema)".into();
+        descriptor.summary = "列出目录内容（Codex Schema）".into();
         descriptor.description =
-            "Lists directory entries using the bridge's existing filesystem sandbox.".into();
+            "使用 Bridge 现有的文件系统沙箱列出目录内容。".into();
         descriptor.category = "codex-filesystem".into();
         descriptor
     }
@@ -61,7 +61,7 @@ impl Tool for ListDir {
     }
 }
 
-/// Codex-shaped one-shot execution tool. It reuses the bridge shell executor.
+/// Codex 形态的一次性执行工具，复用 Bridge 的 Shell 执行器。
 pub struct Exec;
 
 #[async_trait::async_trait]
@@ -69,10 +69,10 @@ impl Tool for Exec {
     fn descriptor(&self) -> ToolDescriptor {
         ToolDescriptor {
             name: "exec".into(),
-            summary: "Run a command using the configured shell".into(),
-            description: "Codex-compatible command execution schema. The bridge keeps shell \
-                          selection under its GUI policy; the optional shell field is accepted \
-                          for schema compatibility but cannot override the configured shell."
+            summary: "使用已配置的 Shell 执行命令".into(),
+            description: "Codex 兼容的命令执行 Schema。Bridge 保持 Shell \
+                          选择由 GUI 策略控制；可选 shell 字段仅用于 \
+                          Schema 兼容，不能覆盖已配置的 Shell。"
                 .into(),
             category: "codex-execution".into(),
             mutating: true,
@@ -80,11 +80,11 @@ impl Tool for Exec {
             latency_hint: "slow".into(),
             input_schema: object_schema(
                 json!({
-                    "cmd": { "type": "string", "description": "Command line to execute" },
+                    "cmd": { "type": "string", "description": "要执行的命令行" },
                     "shell": {
                         "type": "string",
-                        "description": "Compatibility field; shell is selected by the \
-                                        bridge policy",
+                        "description": "兼容字段；Shell 由 \
+                                        Bridge 策略选择",
                     },
                     "login": { "type": "boolean", "default": true },
                     "tty": { "type": "boolean", "default": false },
@@ -96,8 +96,8 @@ impl Tool for Exec {
                     },
                     "timeout_ms": { "type": "integer", "minimum": 100, "maximum": 600000 },
                     "max_output_tokens": { "type": "integer", "minimum": 1, "maximum": 100000 },
-                    "cwd": { "type": "string", "description": "Absolute working directory" },
-                    "env": { "type": "object", "description": "Extra environment variables" },
+                    "cwd": { "type": "string", "description": "绝对工作目录" },
+                    "env": { "type": "object", "description": "额外环境变量" },
                 }),
                 &["cmd"],
             ),
@@ -117,8 +117,8 @@ impl Tool for Exec {
     }
 }
 
-/// Alias for the same execution path. The bridge currently keeps the process
-/// model intentionally simple and reuses the existing shell executor.
+/// 同一执行路径的别名。Bridge 当前刻意保持进程模型
+/// 简单，继续复用现有 Shell 执行器。
 pub struct UnifiedExec;
 
 #[async_trait::async_trait]
@@ -126,9 +126,9 @@ impl Tool for UnifiedExec {
     fn descriptor(&self) -> ToolDescriptor {
         let mut descriptor = Exec.descriptor();
         descriptor.name = "unified_exec".into();
-        descriptor.summary = "Run a command through the unified exec schema".into();
-        descriptor.description = "Codex unified-exec compatible schema backed by the bridge's \
-                                  existing shell executor and policy controls."
+        descriptor.summary = "通过 unified exec Schema 执行命令".into();
+        descriptor.description = "Codex unified-exec 兼容 Schema，底层复用 Bridge \
+                                  现有的 Shell 执行器与策略控制。"
             .into();
         descriptor
     }
@@ -138,8 +138,8 @@ impl Tool for UnifiedExec {
     }
 }
 
-/// Codex's free-form patch tool. It intentionally has its own parser so patch
-/// semantics do not depend on shell quoting or platform-specific utilities.
+/// Codex 的自由格式 Patch 工具。这里使用独立解析器，确保 Patch
+/// 语义不依赖 Shell 引号规则或平台特定工具。
 pub struct ApplyPatch;
 
 #[async_trait::async_trait]
@@ -147,11 +147,11 @@ impl Tool for ApplyPatch {
     fn descriptor(&self) -> ToolDescriptor {
         ToolDescriptor {
             name: "apply_patch".into(),
-            summary: "Create, update, delete, or move files with a patch".into(),
-            description: "Applies the Codex file-oriented patch format directly to the sandboxed \
-                          filesystem. Existing files must first be read with read_file in the same \
-                          session, and stale reads are rejected. Supported operations are Add File, \
-                          Delete File, Update File, and Update File with Move to."
+            summary: "使用 Patch 创建、更新、删除或移动文件".into(),
+            description: "把 Codex 面向文件的 Patch 格式直接应用到沙箱\
+                          文件系统。已有文件必须先在同一会话中通过 read_file \
+                          读取；陈旧读取会被拒绝。支持 Add File、\
+                          Delete File、Update File，以及带 Move to 的 Update File。"
                 .into(),
             category: "codex-filesystem".into(),
             mutating: true,
@@ -161,8 +161,8 @@ impl Tool for ApplyPatch {
                 json!({
                     "patch": {
                         "type": "string",
-                        "description": "A Codex apply_patch document beginning with \
-                                        *** Begin Patch and ending with *** End Patch",
+                        "description": "Codex apply_patch 文档，必须以 \
+                                        *** Begin Patch 开始并以 *** End Patch 结束",
                     },
                 }),
                 &["patch"],
@@ -176,13 +176,13 @@ impl Tool for ApplyPatch {
         let changes = parse_patch(&patch)?;
         if changes.is_empty() {
             return Err(BridgeError::invalid_params(
-                "Patch contains no file operations",
+                "Patch 中没有任何文件操作",
             ));
         }
 
-        // Preflight every existing file touched by the patch before making any
-        // mutation. This prevents a multi-file patch from partially applying
-        // before discovering that a later target was never read.
+        // 在发生任何修改前，先预检 Patch 涉及的全部已有文件。
+        // 这样可以避免多文件 Patch 已经修改一部分后，
+        // 才发现后面的目标文件从未读取。
         for change in &changes {
             match change {
                 PatchChange::Add { .. } => {}
@@ -213,18 +213,18 @@ impl Tool for ApplyPatch {
                     let path = context.policy.sandbox().resolve(&path, false)?;
                     if path.exists() {
                         return Err(BridgeError::invalid_params(format!(
-                            "Cannot add `{}`: file already exists",
+                            "无法新增 `{}`：文件已存在",
                             path.display()
                         )));
                     }
                     if let Some(parent) = path.parent() {
                         tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                            BridgeError::from_io("Failed to create patch parent", e)
+                            BridgeError::from_io("创建 Patch 父目录失败", e)
                         })?;
                     }
                     tokio::fs::write(&path, content)
                         .await
-                        .map_err(|e| BridgeError::from_io("Failed to add file", e))?;
+                        .map_err(|e| BridgeError::from_io("新增文件失败", e))?;
                     context.read_tracker.invalidate(context.read_scope, &path);
                     applied.push(format!("A {}", path.display()));
                 }
@@ -232,13 +232,13 @@ impl Tool for ApplyPatch {
                     let path = context.policy.sandbox().resolve(&path, false)?;
                     if path.is_dir() {
                         return Err(BridgeError::invalid_params(format!(
-                            "Cannot delete directory `{}` with apply_patch",
+                            "apply_patch 不能删除目录 `{}`",
                             path.display()
                         )));
                     }
                     tokio::fs::remove_file(&path)
                         .await
-                        .map_err(|e| BridgeError::from_io("Failed to delete file", e))?;
+                        .map_err(|e| BridgeError::from_io("删除文件失败", e))?;
                     context.read_tracker.invalidate(context.read_scope, &path);
                     applied.push(format!("D {}", path.display()));
                 }
@@ -250,7 +250,7 @@ impl Tool for ApplyPatch {
                     let path = context.policy.sandbox().resolve(&path, false)?;
                     let original = tokio::fs::read_to_string(&path)
                         .await
-                        .map_err(|e| BridgeError::from_io("Failed to read patch target", e))?;
+                        .map_err(|e| BridgeError::from_io("读取 Patch 目标失败", e))?;
                     let updated = apply_hunks(&original, &hunks)?;
                     let target = if let Some(move_to) = move_to {
                         context.policy.sandbox().resolve(&move_to, false)?
@@ -259,15 +259,15 @@ impl Tool for ApplyPatch {
                     };
                     if let Some(parent) = target.parent() {
                         tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                            BridgeError::from_io("Failed to create patch target parent", e)
+                            BridgeError::from_io("创建 Patch 目标父目录失败", e)
                         })?;
                     }
                     tokio::fs::write(&target, updated)
                         .await
-                        .map_err(|e| BridgeError::from_io("Failed to write patched file", e))?;
+                        .map_err(|e| BridgeError::from_io("写入 Patch 后的文件失败", e))?;
                     if target != path {
                         tokio::fs::remove_file(&path).await.map_err(|e| {
-                            BridgeError::from_io("Failed to remove moved source", e)
+                            BridgeError::from_io("删除移动后的源文件失败", e)
                         })?;
                     }
                     context.read_tracker.invalidate(context.read_scope, &path);
@@ -287,7 +287,7 @@ impl Tool for ApplyPatch {
 
         Ok(ToolOutput {
             content: vec![super::ContentBlock::text(format!(
-                "Applied {} patch operation(s) in {} ms:\n{}",
+                "已应用 {} 个 Patch 操作，耗时 {} ms：\n{}",
                 applied.len(),
                 started.elapsed().as_millis(),
                 applied.join("\n")
@@ -304,19 +304,19 @@ async fn require_prior_read(context: &ToolContext<'_>, raw_path: &str) -> Result
     let path = context.policy.sandbox().resolve(raw_path, false)?;
     if !path.exists() {
         return Err(BridgeError::invalid_params(format!(
-            "Patch target does not exist: {}",
+            "Patch 目标不存在：{}",
             path.display()
         )));
     }
     if path.is_dir() {
         return Err(BridgeError::invalid_params(format!(
-            "Patch target is a directory: {}",
+            "Patch 目标是目录：{}",
             path.display()
         )));
     }
     let current = tokio::fs::read(&path)
         .await
-        .map_err(|error| BridgeError::from_io("Failed to verify patch target", error))?;
+        .map_err(|error| BridgeError::from_io("校验 Patch 目标失败", error))?;
     context
         .read_tracker
         .require_current(context.read_scope, &path, &current)
@@ -344,7 +344,7 @@ fn parse_patch(patch: &str) -> Result<Vec<PatchChange>> {
         || lines.last().copied() != Some("*** End Patch")
     {
         return Err(BridgeError::invalid_params(
-            "Invalid apply_patch envelope; expected *** Begin Patch / *** End Patch",
+            "apply_patch Envelope 无效；应以 *** Begin Patch 开始并以 *** End Patch 结束",
         ));
     }
     let mut i = 1;
@@ -361,7 +361,7 @@ fn parse_patch(patch: &str) -> Result<Vec<PatchChange>> {
                     content.push('\n');
                 } else {
                     return Err(BridgeError::invalid_params(
-                        "Add File lines must begin with `+`",
+                        "Add File 内容行必须以 `+` 开头",
                     ));
                 }
                 i += 1;
@@ -410,7 +410,7 @@ fn parse_patch(patch: &str) -> Result<Vec<PatchChange>> {
             continue;
         }
         return Err(BridgeError::invalid_params(format!(
-            "Unknown apply_patch operation `{header}`"
+            "未知的 apply_patch 操作 `{header}`"
         )));
     }
     Ok(changes)
@@ -436,7 +436,7 @@ fn apply_hunks(original: &str, hunks: &[Vec<String>]) -> Result<String> {
             .map(|s| format_with_original_ending(s, original))
             .collect();
         let pos = find_sequence(&lines, &old).ok_or_else(|| {
-            BridgeError::invalid_params("Patch hunk context did not match the target file")
+            BridgeError::invalid_params("Patch Hunk 上下文与目标文件不匹配")
         })?;
         lines.splice(pos..pos + old.len(), new);
     }

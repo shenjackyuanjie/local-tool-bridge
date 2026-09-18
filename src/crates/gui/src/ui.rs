@@ -1,4 +1,4 @@
-//! Window rendering.
+//! 窗口渲染。
 
 use crate::app::{BridgeApp, Tab};
 use eframe::egui::{self, Color32, RichText};
@@ -84,15 +84,15 @@ fn draw_direct_mcp_setup(app: &mut BridgeApp, ui: &mut egui::Ui) {
         .num_columns(2)
         .spacing([10.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Bind");
+            ui.label("监听地址");
             ui.text_edit_singleline(&mut app.direct_mcp_config.bind);
             ui.end_row();
 
-            ui.label("Port");
+            ui.label("端口");
             ui.add(egui::DragValue::new(&mut app.direct_mcp_config.port).range(1..=u16::MAX));
             ui.end_row();
 
-            ui.label("Public URL");
+            ui.label("公网 URL");
             ui.text_edit_singleline(&mut app.direct_mcp_config.public_base_url);
             ui.end_row();
 
@@ -126,7 +126,7 @@ fn draw_direct_mcp_setup(app: &mut BridgeApp, ui: &mut egui::Ui) {
     ui.add_space(8.0);
     match app.direct_mcp_config.auth_mode {
         DirectAuthMode::StaticBearer => {
-            ui.label(RichText::new("Static Bearer").strong());
+            ui.label(RichText::new("静态 Bearer").strong());
             ui.label(
                 RichText::new(
                     "兼容原 Direct MCP：客户端发送 Authorization: Bearer <token>。\
@@ -151,7 +151,7 @@ fn draw_direct_mcp_setup(app: &mut BridgeApp, ui: &mut egui::Ui) {
             });
         }
         DirectAuthMode::SecretPath => {
-            ui.label(RichText::new("Secret Path / No Auth").strong());
+            ui.label(RichText::new("Secret Path / 无认证").strong());
             ui.label(
                 RichText::new(
                     "URL 本身就是凭据，例如 /mcp/<随机 256-bit token>。比公开 /mcp 无认证安全得多，\
@@ -172,7 +172,7 @@ fn draw_direct_mcp_setup(app: &mut BridgeApp, ui: &mut egui::Ui) {
                 }
             });
             ui.label(
-                RichText::new("在 ChatGPT 中把身份验证选择为 No Authentication。")
+                RichText::new("在 ChatGPT 中把身份验证选择为 No Authentication（无认证）。")
                     .weak()
                     .small(),
             );
@@ -216,7 +216,7 @@ fn draw_direct_mcp_setup(app: &mut BridgeApp, ui: &mut egui::Ui) {
                     });
             }
             ui.label(
-                RichText::new("Scopes: mcp offline_access")
+                RichText::new("Scopes：mcp offline_access")
                     .monospace()
                     .small(),
             );
@@ -273,7 +273,7 @@ fn draw_tunnel_setup(app: &mut BridgeApp, ui: &mut egui::Ui) {
         .num_columns(2)
         .spacing([10.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Control Plane");
+            ui.label("控制平面");
             ui.text_edit_singleline(&mut app.tunnel_config.control_plane_base_url);
             ui.end_row();
             ui.label("Tunnel ID");
@@ -291,7 +291,7 @@ fn draw_tunnel_setup(app: &mut BridgeApp, ui: &mut egui::Ui) {
             ui.label("启动等待");
             ui.text_edit_singleline(&mut app.tunnel_config.startup_wait_timeout);
             ui.end_row();
-            ui.label("Poll 超时");
+            ui.label("轮询超时");
             ui.text_edit_singleline(&mut app.tunnel_config.poll_timeout);
             ui.end_row();
         });
@@ -324,7 +324,7 @@ fn draw_tunnel_setup(app: &mut BridgeApp, ui: &mut egui::Ui) {
 
 fn draw_status(app: &mut BridgeApp, ui: &mut egui::Ui) {
     ui.heading("运行状态");
-    ui.label(RichText::new("本地工具、MCP Gateway 与安全策略").weak());
+    ui.label(RichText::new("本地工具、MCP 网关与安全策略").weak());
     ui.add_space(10.0);
     egui::Grid::new("addresses")
         .num_columns(2)
@@ -703,10 +703,10 @@ fn draw_setup(app: &mut BridgeApp, ui: &mut egui::Ui) {
             ui.label("名称");
             ui.text_edit_singleline(&mut app.new_mcp_name);
             ui.end_row();
-            ui.label("Command");
+            ui.label("命令");
             ui.text_edit_singleline(&mut app.new_mcp_command);
             ui.end_row();
-            ui.label("Arguments");
+            ui.label("参数");
             ui.text_edit_singleline(&mut app.new_mcp_args);
             ui.end_row();
             ui.label("工作目录");

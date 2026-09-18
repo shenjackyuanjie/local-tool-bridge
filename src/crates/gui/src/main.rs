@@ -1,9 +1,9 @@
-//! `ltb-gui` — the bridge control panel.
+//! `ltb-gui` —— Bridge 控制面板。
 //!
-//! Starts the dispatcher on a background tokio runtime, brings up the loopback
-//! transports, and opens a native egui window. The window is the only place a
-//! human can answer an approval prompt, so closing it flips the approver to
-//! non-interactive and every subsequent `ask` is denied.
+//! 在后台 Tokio Runtime 中启动调度器与 loopback
+//! 传输，并打开原生 egui 窗口。该窗口是用户处理审批请求的唯一入口，
+//! 因此关闭窗口后会把审批器切换为
+//! 非交互状态，之后所有 `ask` 都会被拒绝。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,13 +16,13 @@ mod approver;
 mod fonts;
 mod ui;
 
-/// How long an approval prompt stays open before it is denied.
+/// 审批请求保持可操作状态的最长时间，超时后自动拒绝。
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// The loopback ports to try, in order.
+/// 按顺序尝试的 loopback 端口。
 ///
-/// A second instance would otherwise fail to bind and leave the user with a
-/// window that silently does nothing.
+/// 若启动第二个实例，会因为端口绑定失败而留下一个
+/// 看似正常但实际上无法工作的窗口。
 const PORTS: &[u16] = &[8788, 8789, 8790, 8791];
 
 fn main() -> eframe::Result<()> {
@@ -33,12 +33,12 @@ fn main() -> eframe::Result<()> {
         )
         .init();
 
-    // Only one control panel may run: two would fight over the ports and show
-    // two approval dialogs for one call.
+    // 只允许一个控制面板运行：两个实例会争抢端口，并且可能针对
+    // 同一次调用弹出两个审批窗口。
     let instance = match single_instance::SingleInstance::new("local-tool-bridge-gui") {
         Ok(instance) => instance,
         Err(error) => {
-            eprintln!("failed to initialise the single-instance guard: {error}");
+            eprintln!("初始化单实例保护失败: {error}");
             return Ok(());
         }
     };
@@ -48,8 +48,8 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
-    // A multi-threaded runtime because tool calls are concurrent: a slow shell
-    // command must not block a filesystem read.
+    // 使用多线程 Runtime，因为工具调用允许并发：耗时的 Shell
+    // 命令不能阻塞文件读取。
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .worker_threads(4)
@@ -57,15 +57,15 @@ fn main() -> eframe::Result<()> {
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            eprintln!("failed to start the async runtime: {error}");
+            eprintln!("启动异步 Runtime 失败: {error}");
             return Ok(());
         }
     };
 
     let (approver, approval_rx) = GuiApprover::new(APPROVAL_TIMEOUT);
 
-    // Everything the window needs, resolved before the first frame so the UI
-    // never shows a half-initialised state.
+    // 在第一帧之前准备好窗口需要的全部状态，避免 UI
+    // 显示半初始化状态。
     let (
         dispatcher,
         secret,
@@ -79,13 +79,13 @@ fn main() -> eframe::Result<()> {
         let dispatcher = match ltb_host::build_dispatcher(None, true).await {
             Ok(dispatcher) => dispatcher,
             Err(error) => {
-                eprintln!("failed to start the bridge: {error}");
+                eprintln!("启动 Bridge 失败: {error}");
                 std::process::exit(1);
             }
         };
 
-        // Install the approver before any transport starts, so a call arriving
-        // during startup still reaches a human.
+        // 在启动任何传输之前先安装审批器，确保启动期间到达的调用
+        // 仍然能够交给用户审批。
         dispatcher.set_approver(approver.clone()).await;
 
         let secret = ltb_host::load_or_create_secret().unwrap_or_default();
@@ -103,12 +103,12 @@ fn main() -> eframe::Result<()> {
                     ltb_host::run_http(*port, dispatcher.clone(), secret.clone()).await
                 {
                     http_address = Some(address.to_string());
-                    tracing::info!(%address, "HTTP transport listening");
+                    tracing::info!(%address, "HTTP 传输开始监听");
                 }
             }
             if websocket_address.is_none() {
-                // The WebSocket transport is offered alongside HTTP so a client
-                // that needs server push has somewhere to connect.
+                // WebSocket 与 HTTP 同时提供，方便需要服务端主动推送的
+                // 客户端建立连接。
                 if let Ok(address) =
                     ltb_host::run_websocket(*port, dispatcher.clone(), secret.clone()).await
                 {
@@ -116,13 +116,13 @@ fn main() -> eframe::Result<()> {
                 }
             }
             if mcp_address.is_none() {
-                // The MCP transport lets ChatGPT/Codex reach the same tools
-                // through OpenAI's Secure MCP Tunnel.
+                // MCP 传输让 ChatGPT / Codex 能通过 OpenAI Secure MCP Tunnel
+                // 访问同一套本地工具。
                 if let Ok(address) =
                     ltb_host::run_mcp(*port, dispatcher.clone(), secret.clone()).await
                 {
                     mcp_address = Some(address.to_string());
-                    tracing::info!(%address, "MCP transport listening");
+                    tracing::info!(%address, "MCP 传输开始监听");
                 }
             }
             if http_address.is_some() && websocket_address.is_some() && mcp_address.is_some() {
@@ -138,11 +138,11 @@ fn main() -> eframe::Result<()> {
                         Some(format!("http://{}{}", running.address, running.mcp_path));
                     tracing::info!(
                         address = %running.address,
-                        "Direct Remote MCP transport listening"
+                        "Direct Remote MCP 传输开始监听"
                     );
                 }
                 Err(error) => {
-                    tracing::error!(%error, "failed to start Direct Remote MCP");
+                    tracing::error!(%error, "启动 Direct Remote MCP 失败");
                 }
             }
         }
@@ -161,7 +161,7 @@ fn main() -> eframe::Result<()> {
                     {
                         Ok(process) => tunnel_process = Some(process),
                         Err(error) => {
-                            tracing::error!(%error, "failed to start Secure MCP Tunnel client")
+                            tracing::error!(%error, "启动 Secure MCP Tunnel Client 失败")
                         }
                     }
                 }
@@ -194,8 +194,8 @@ fn main() -> eframe::Result<()> {
         "Local Tool Bridge — 本地工具桥接",
         options,
         Box::new(move |cc| {
-            // Must run before the first frame: the default font set has no CJK
-            // coverage, so without this every Chinese label renders as a box.
+            // 必须在第一帧前执行：默认字体不包含 CJK
+            // 字形，否则中文标签会显示成方框。
             fonts::install(&cc.egui_ctx);
 
             let app = BridgeApp::new(BridgeAppInit {
@@ -220,34 +220,34 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-/// Wraps the app so `eframe` can drive it, and so the runtime outlives the
-/// window instead of being dropped at the end of `main`.
+/// 包装应用供 `eframe` 驱动，同时确保 Runtime 生命周期长于
+/// 窗口，而不是在 `main` 结束时被提前释放。
 struct GuiFrame {
     app: BridgeApp,
     approvals: tokio::sync::mpsc::UnboundedReceiver<approver::PendingApproval>,
     approver: Arc<GuiApprover>,
-    /// Kept alive for the process lifetime; dropping it would stop the host.
+    /// 在整个进程生命周期内保持存活；释放后 Host 会停止运行。
     runtime: Option<tokio::runtime::Runtime>,
 }
 
 impl eframe::App for GuiFrame {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
-        // Drains approvals and refreshes the audit view.
+        // 处理待审批请求并刷新审计视图。
         self.app.poll(&mut self.approvals);
 
         ui::draw(&mut self.app, ctx);
 
-        // Repaint while a prompt is waiting, so an expiring approval does not sit
-        // on screen looking actionable.
+        // 存在待审批请求时持续重绘，避免已经临近过期的审批
+        // 长时间停留在界面上并看起来仍可操作。
         if self.app.active_approval.is_some() {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        // With no window there is nobody to ask, so every later approval must be
-        // denied rather than silently allowed. This is the fail-closed edge, and
-        // it matters because the transports keep running after the UI is gone.
+        // 窗口关闭后无法再询问用户，因此之后所有审批都必须
+        // 拒绝而不是静默允许。这是 fail-closed 的关键边界，
+        // 因为 UI 消失后传输层仍可能继续运行。
         let approver = self.approver.clone();
         if let Some(runtime) = &self.runtime {
             runtime.block_on(async move {

@@ -1,10 +1,10 @@
-//! Minimal single-user OAuth 2.1-style authorization server for Direct MCP.
+//! 面向 Direct MCP 的最小化单用户 OAuth 2.1 风格授权服务器。
 //!
-//! This is intentionally small: it supports one pre-registered confidential
-//! client, Authorization Code + PKCE (S256), refresh tokens, RFC 8414-style
-//! authorization-server metadata, and MCP protected-resource metadata. Tokens
-//! are opaque-to-the-client signed capabilities so they survive host restarts
-//! without a token database.
+//! 实现刻意保持精简：支持一个预注册的 Confidential Client、
+//! Authorization Code + PKCE（S256）、Refresh Token、RFC 8414 风格的
+//! Authorization Server Metadata 与 MCP Protected Resource Metadata。Token
+//! 对客户端表现为不透明的签名 Capability，因此 Host 重启后仍然有效，
+//! 无需额外 Token 数据库。
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -86,24 +86,24 @@ pub struct OAuthServer {
 impl OAuthServer {
     pub fn new(config: OAuthServerConfig) -> Result<Self, String> {
         let mut base = Url::parse(config.public_base_url.trim())
-            .map_err(|error| format!("invalid OAuth public base URL: {error}"))?;
+            .map_err(|error| format!("无效的 OAuth 公网 Base URL: {error}"))?;
         if base.query().is_some() || base.fragment().is_some() {
-            return Err("OAuth public base URL must not contain a query or fragment".into());
+            return Err("OAuth 公网 Base URL 不能包含 Query 或 Fragment".into());
         }
         let path = base.path().trim_end_matches('/').to_string();
         base.set_path(&path);
         let base_url = base.as_str().trim_end_matches('/').to_string();
 
         let redirect = Url::parse(config.redirect_uri.trim())
-            .map_err(|error| format!("invalid OAuth redirect URI: {error}"))?;
+            .map_err(|error| format!("无效的 OAuth Redirect URI: {error}"))?;
         if redirect.scheme() != "https" {
-            return Err("OAuth redirect URI must use https".into());
+            return Err("OAuth Redirect URI 必须使用 HTTPS".into());
         }
         if config.client_id.trim().is_empty() || config.client_secret.trim().is_empty() {
-            return Err("OAuth client ID and secret must not be empty".into());
+            return Err("OAuth Client ID 与 Client Secret 不能为空".into());
         }
         if config.signing_key.len() < 32 {
-            return Err("OAuth signing key must contain at least 32 bytes".into());
+            return Err("OAuth 签名密钥至少需要 32 字节".into());
         }
 
         Ok(Self {
@@ -140,7 +140,7 @@ impl OAuthServer {
             (Method::GET, AUTH_PATH) => self.authorization_page(request),
             (Method::POST, AUTH_PATH) => self.authorization_decision(request).await,
             (Method::POST, TOKEN_PATH) => self.token(request).await,
-            _ => text_response(StatusCode::METHOD_NOT_ALLOWED, "method not allowed"),
+            _ => text_response(StatusCode::METHOD_NOT_ALLOWED, "不允许该 HTTP 方法"),
         }
     }
 
@@ -185,25 +185,25 @@ impl OAuthServer {
         let code_challenge_method = params.get("code_challenge_method").map(String::as_str);
 
         if response_type != Some("code") {
-            return oauth_error_page("unsupported_response_type", "response_type must be code");
+            return oauth_error_page("unsupported_response_type", "response_type 必须为 code");
         }
         if client_id != Some(self.client_id.as_str()) {
-            return oauth_error_page("unauthorized_client", "unknown client_id");
+            return oauth_error_page("unauthorized_client", "未知的 client_id");
         }
         if redirect_uri != Some(self.redirect_uri.as_str()) {
             return oauth_error_page(
                 "invalid_request",
-                "redirect_uri does not match the registered client",
+                "redirect_uri 与已注册客户端不匹配",
             );
         }
         if code_challenge_method != Some("S256") {
-            return oauth_error_page("invalid_request", "PKCE code_challenge_method must be S256");
+            return oauth_error_page("invalid_request", "PKCE code_challenge_method 必须为 S256");
         }
         let Some(code_challenge) = code_challenge else {
-            return oauth_error_page("invalid_request", "missing PKCE code_challenge");
+            return oauth_error_page("invalid_request", "缺少 PKCE code_challenge");
         };
         if code_challenge.len() < 32 || code_challenge.len() > 128 {
-            return oauth_error_page("invalid_request", "invalid PKCE code_challenge length");
+            return oauth_error_page("invalid_request", "PKCE code_challenge 长度无效");
         }
 
         let scope = match normalize_scope(params.get("scope").map(String::as_str)) {
@@ -215,7 +215,7 @@ impl OAuthServer {
             if resource != &self.resource_url {
                 return oauth_error_page(
                     "invalid_target",
-                    "resource does not match this MCP server",
+                    "resource 与当前 MCP Server 不匹配",
                 );
             }
         }
@@ -264,7 +264,7 @@ impl OAuthServer {
             Err(response) => return response,
         };
         let Some(request_id) = params.get("request_id") else {
-            return oauth_error_page("invalid_request", "missing request_id");
+            return oauth_error_page("invalid_request", "缺少 request_id");
         };
         let Some(pending) = self
             .pending
@@ -274,11 +274,11 @@ impl OAuthServer {
         else {
             return oauth_error_page(
                 "invalid_request",
-                "authorization request expired or unknown",
+                "授权请求已过期或不存在",
             );
         };
         if pending.expires_at < unix_now() {
-            return oauth_error_page("invalid_request", "authorization request expired");
+            return oauth_error_page("invalid_request", "授权请求已过期");
         }
 
         if params.get("decision").map(String::as_str) != Some("allow") {
@@ -304,7 +304,7 @@ impl OAuthServer {
         let mut redirect = match Url::parse(&pending.redirect_uri) {
             Ok(url) => url,
             Err(_) => {
-                return oauth_error_page("server_error", "registered redirect URI is invalid");
+                return oauth_error_page("server_error", "已注册的 Redirect URI 无效");
             }
         };
         {
@@ -507,7 +507,7 @@ fn normalize_scope(raw: Option<&str>) -> Result<String, String> {
     let mut scopes = Vec::new();
     for scope in raw.split_whitespace() {
         if !matches!(scope, "mcp" | "offline_access") {
-            return Err(format!("unsupported scope: {scope}"));
+            return Err(format!("不支持的 Scope: {scope}"));
         }
         if !scopes.iter().any(|known| known == &scope) {
             scopes.push(scope);
@@ -577,7 +577,7 @@ fn redirect_oauth_error(
     error: &str,
 ) -> Response<Full<Bytes>> {
     let Ok(mut url) = Url::parse(redirect_uri) else {
-        return oauth_error_page("server_error", "registered redirect URI is invalid");
+        return oauth_error_page("server_error", "已注册的 Redirect URI 无效");
     };
     {
         let mut query = url.query_pairs_mut();
@@ -595,7 +595,7 @@ fn redirect_response(location: &str) -> Response<Full<Bytes>> {
         .header("location", location)
         .header("cache-control", "no-store")
         .body(Full::new(Bytes::new()))
-        .unwrap_or_else(|_| text_response(StatusCode::INTERNAL_SERVER_ERROR, "redirect failed"))
+        .unwrap_or_else(|_| text_response(StatusCode::INTERNAL_SERVER_ERROR, "Redirect 失败"))
 }
 
 fn json_response(status: StatusCode, value: serde_json::Value) -> Response<Full<Bytes>> {
@@ -624,7 +624,7 @@ fn html_response(status: StatusCode, body: String) -> Response<Full<Bytes>> {
             "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
         )
         .body(Full::new(Bytes::from(body)))
-        .unwrap_or_else(|_| text_response(StatusCode::INTERNAL_SERVER_ERROR, "response failed"))
+        .unwrap_or_else(|_| text_response(StatusCode::INTERNAL_SERVER_ERROR, "生成响应失败"))
 }
 
 fn text_response(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
@@ -640,7 +640,7 @@ fn oauth_error_page(error: &str, description: &str) -> Response<Full<Bytes>> {
     html_response(
         StatusCode::BAD_REQUEST,
         format!(
-            "<!doctype html><meta charset=\"utf-8\"><title>OAuth error</title>\
+            "<!doctype html><meta charset=\"utf-8\"><title>OAuth 错误</title>\
              <body style=\"font-family:system-ui;max-width:700px;margin:64px auto\">\
              <h1>OAuth error</h1><p><code>{}</code></p><p>{}</p></body>",
             html_escape(error),

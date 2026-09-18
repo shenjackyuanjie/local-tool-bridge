@@ -1,13 +1,13 @@
-//! Optional Direct Remote MCP configuration.
+//! 可选的 Direct Remote MCP 配置。
 //!
-//! Direct MCP remains opt-in and is intended to sit behind a TLS reverse proxy
-//! such as Caddy. Three authentication modes are available:
-//! - static Bearer token (the original Direct MCP behavior);
-//! - OAuth Authorization Code + PKCE for ChatGPT/custom MCP clients;
-//! - a high-entropy capability URL such as /mcp/<random>, with no header auth.
+//! Direct MCP 默认关闭，建议部署在 Caddy 等 TLS 反向代理之后。
+//! 提供三种认证模式：
+//! - 静态 Bearer Token（最初的 Direct MCP 行为）；
+//! - 面向 ChatGPT / 自定义 MCP 客户端的 OAuth Authorization Code + PKCE；
+//! - 形如 `/<random>/mcp` 的高熵 Capability URL，无需额外 Header 认证。
 //!
-//! Capability URLs are convenient but weaker than OAuth/Bearer because the URL
-//! itself is the credential and can leak through logs, screenshots or history.
+//! Capability URL 使用方便，但其安全性弱于 OAuth / Bearer：URL
+//! 本身就是凭证，可能通过日志、截图或历史记录泄漏。
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -41,19 +41,19 @@ pub enum DirectAuthMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct DirectMcpConfig {
-    /// Whether the GUI should start the direct listener on launch.
+    /// GUI 启动时是否自动启动 Direct listener。
     pub enabled: bool,
-    /// Address to bind. Keep this at 127.0.0.1 when using a local reverse proxy.
+    /// 监听地址。使用本机反向代理时应保持为 127.0.0.1。
     pub bind: String,
-    /// Dedicated direct-MCP port. Chosen outside the GUI's loopback probe range.
+    /// Direct MCP 专用端口，避开 GUI 的 loopback 探测范围。
     pub port: u16,
-    /// Public reverse-proxy base URL, e.g. https://ddns.example.com:8443.
+    /// 公网反向代理 Base URL，例如 https://ddns.example.com:8443。
     pub public_base_url: String,
-    /// Original static Bearer token file override. Empty uses the per-user default.
+    /// 静态 Bearer Token 文件覆盖配置；留空时使用当前用户默认路径。
     pub token_file: String,
-    /// Authentication mode for the Direct listener.
+    /// Direct listener 使用的认证模式。
     pub auth_mode: DirectAuthMode,
-    /// Exact OAuth redirect URI copied from the ChatGPT connector setup page.
+    /// 从 ChatGPT Connector 设置页复制的精确 OAuth Redirect URI。
     pub oauth_redirect_uri: String,
 }
 
@@ -75,7 +75,7 @@ impl DirectMcpConfig {
     pub fn socket_addr(&self) -> Result<SocketAddr> {
         let ip = self.bind.trim().parse::<IpAddr>().map_err(|error| {
             BridgeError::invalid_params(format!(
-                "Invalid Direct MCP bind address '{}': {error}",
+                "无效的 Direct MCP 监听地址 '{}': {error}",
                 self.bind
             ))
         })?;
@@ -86,24 +86,24 @@ impl DirectMcpConfig {
         let value = self.public_base_url.trim().trim_end_matches('/');
         if value.is_empty() {
             return Err(BridgeError::invalid_params(
-                "Direct MCP Public URL is required for this authentication mode",
+                "当前认证模式必须配置 Direct MCP Public URL",
             ));
         }
         let parsed = url::Url::parse(value)
-            .map_err(|error| BridgeError::invalid_params(format!("Invalid Public URL: {error}")))?;
+            .map_err(|error| BridgeError::invalid_params(format!("无效的 Public URL: {error}")))?;
         if parsed.scheme() != "https" {
             return Err(BridgeError::invalid_params(
-                "Direct MCP Public URL must use https",
+                "Direct MCP Public URL 必须使用 HTTPS",
             ));
         }
         if parsed.query().is_some() || parsed.fragment().is_some() {
             return Err(BridgeError::invalid_params(
-                "Direct MCP Public URL must not contain a query or fragment",
+                "Direct MCP Public URL 不能包含 Query 或 Fragment",
             ));
         }
         if parsed.path() != "/" {
             return Err(BridgeError::invalid_params(
-                "Direct MCP Public URL must not contain a path",
+                "Direct MCP Public URL 不能包含 Path",
             ));
         }
         Ok(value.to_string())
@@ -165,7 +165,7 @@ pub fn load_config() -> DirectMcpConfig {
             tracing::error!(
                 path = %path.display(),
                 %error,
-                "Direct MCP config is malformed; using defaults"
+                "Direct MCP 配置格式错误，改用默认配置"
             );
             DirectMcpConfig::default()
         }),
@@ -174,7 +174,7 @@ pub fn load_config() -> DirectMcpConfig {
             tracing::error!(
                 path = %path.display(),
                 %error,
-                "Failed to read Direct MCP config; using defaults"
+                "读取 Direct MCP 配置失败，改用默认配置"
             );
             DirectMcpConfig::default()
         }
@@ -183,17 +183,17 @@ pub fn load_config() -> DirectMcpConfig {
 
 pub fn save_config(config: &DirectMcpConfig) -> Result<PathBuf> {
     let path = config_path().ok_or_else(|| {
-        BridgeError::internal("No per-user config directory is available on this system")
+        BridgeError::internal("当前系统无法获取用户级配置目录")
     })?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| BridgeError::from_io("Failed to create the config directory", e))?;
+            .map_err(|e| BridgeError::from_io("创建配置目录失败", e))?;
     }
     let json = serde_json::to_string_pretty(config).map_err(|e| {
-        BridgeError::internal(format!("Failed to serialise Direct MCP config: {e}"))
+        BridgeError::internal(format!("序列化 Direct MCP 配置失败: {e}"))
     })?;
     std::fs::write(&path, json)
-        .map_err(|e| BridgeError::from_io("Failed to write Direct MCP config", e))?;
+        .map_err(|e| BridgeError::from_io("写入 Direct MCP 配置失败", e))?;
     Ok(path)
 }
 
@@ -244,7 +244,7 @@ pub fn build_runtime(config: &DirectMcpConfig) -> Result<DirectMcpRuntime> {
     match config.auth_mode {
         DirectAuthMode::StaticBearer => {
             let token = load_or_create_token(config)
-                .map_err(|error| BridgeError::from_io("Failed to load Direct MCP token", error))?;
+                .map_err(|error| BridgeError::from_io("读取 Direct MCP Token 失败", error))?;
             Ok(DirectMcpRuntime {
                 bind,
                 mcp_path: "/mcp".into(),
@@ -254,7 +254,7 @@ pub fn build_runtime(config: &DirectMcpConfig) -> Result<DirectMcpRuntime> {
         }
         DirectAuthMode::SecretPath => {
             let path_token = load_or_create_path_token().map_err(|error| {
-                BridgeError::from_io("Failed to load Direct MCP secret path", error)
+                BridgeError::from_io("读取 Direct MCP Secret Path 失败", error)
             })?;
             Ok(DirectMcpRuntime {
                 bind,
@@ -267,14 +267,14 @@ pub fn build_runtime(config: &DirectMcpConfig) -> Result<DirectMcpRuntime> {
             let base_url = config.normalized_public_base_url()?;
             if config.oauth_redirect_uri.trim().is_empty() {
                 return Err(BridgeError::invalid_params(
-                    "OAuth redirect URI is required in OAuth mode",
+                    "OAuth 模式必须配置 Redirect URI",
                 ));
             }
             let credentials = load_or_create_oauth_credentials().map_err(|error| {
-                BridgeError::from_io("Failed to load OAuth client credentials", error)
+                BridgeError::from_io("读取 OAuth Client 凭据失败", error)
             })?;
             let signing_key = load_or_create_oauth_signing_key()
-                .map_err(|error| BridgeError::from_io("Failed to load OAuth signing key", error))?;
+                .map_err(|error| BridgeError::from_io("读取 OAuth 签名密钥失败", error))?;
             let resource_url = format!("{base_url}/mcp");
             let server = OAuthServer::new(OAuthServerConfig {
                 public_base_url: base_url,
@@ -300,7 +300,7 @@ pub fn public_mcp_url(config: &DirectMcpConfig) -> Result<String> {
     let path = match config.auth_mode {
         DirectAuthMode::SecretPath => {
             let token = load_or_create_path_token().map_err(|error| {
-                BridgeError::from_io("Failed to load Direct MCP secret path", error)
+                BridgeError::from_io("读取 Direct MCP Secret Path 失败", error)
             })?;
             secret_mcp_path(&token)
         }
@@ -313,15 +313,15 @@ pub fn oauth_endpoint_lines(config: &DirectMcpConfig) -> Result<Vec<(String, Str
     let base = config.normalized_public_base_url()?;
     Ok(vec![
         ("MCP URL".into(), format!("{base}/mcp")),
-        ("Resource".into(), format!("{base}/mcp")),
-        ("Auth URL".into(), format!("{base}/oauth/authorize")),
+        ("资源 URL".into(), format!("{base}/mcp")),
+        ("授权 URL".into(), format!("{base}/oauth/authorize")),
         ("Token URL".into(), format!("{base}/oauth/token")),
         (
             "OAuth Metadata".into(),
             format!("{base}/.well-known/oauth-authorization-server"),
         ),
         (
-            "Resource Metadata".into(),
+            "资源 Metadata".into(),
             format!("{base}/.well-known/oauth-protected-resource"),
         ),
         ("Authorization Server".into(), base),
@@ -342,7 +342,7 @@ fn load_or_create_oauth_signing_key() -> std::io::Result<Vec<u8>> {
     URL_SAFE_NO_PAD.decode(encoded.trim()).map_err(|error| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("invalid OAuth signing key: {error}"),
+            format!("无效的 OAuth 签名密钥: {error}"),
         )
     })
 }

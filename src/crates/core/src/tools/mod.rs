@@ -1,4 +1,4 @@
-//! Tool registry and the `Tool` trait.
+//! 工具注册表与 `Tool` trait。
 
 use crate::error::{BridgeError, Result};
 use crate::policy::PolicyEngine;
@@ -126,8 +126,8 @@ impl ToolOutput {
         self
     }
 }
-/// Tracks which file contents the model has actually observed before a
-/// structured file-write tool is allowed to replace them.
+/// 记录模型在结构化写入前实际读取过的文件内容，
+/// 只有读取记录仍与磁盘内容一致时才允许覆盖。
 #[derive(Default)]
 pub struct ReadBeforeWriteTracker {
     reads: Mutex<HashMap<String, HashMap<PathBuf, u64>>>,
@@ -159,7 +159,7 @@ impl ReadBeforeWriteTracker {
 
         match observed {
             None => Err(BridgeError::denied(format!(
-                "Refusing to modify `{}` before it has been read with read_file in this session.                  Read the file first, then retry the write.",
+                "拒绝修改 `{}`：当前会话尚未通过 read_file 读取该文件。请先读取文件，再重试写入。",
                 path.display()
             ))),
             Some(fingerprint) if fingerprint != current => {
@@ -167,7 +167,7 @@ impl ReadBeforeWriteTracker {
                     scope_reads.remove(&path);
                 }
                 Err(BridgeError::denied(format!(
-                    "Refusing to modify `{}` because it changed since the last read_file call.                      Read the file again, then retry the write.",
+                    "拒绝修改 `{}`：文件在上次 read_file 之后已发生变化。请重新读取文件，再重试写入。",
                     path.display()
                 )))
             }
@@ -246,7 +246,7 @@ impl ToolRegistry {
     pub fn require(&self, n: &str) -> Result<&Arc<dyn Tool>> {
         self.get(n).ok_or_else(|| BridgeError::tool_not_found(n))
     }
-    /// Descriptors for the tools exposed to clients: the Codex-compatible set.
+    /// 暴露给客户端的工具描述：Codex 兼容工具集合。
     pub fn descriptors(&self) -> Vec<ToolDescriptor> {
         self.tools
             .values()
@@ -271,7 +271,7 @@ pub fn required_str(a: &Value, k: &str) -> Result<String> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| {
-            BridgeError::invalid_params(format!("Missing required string argument `{k}`"))
+            BridgeError::invalid_params(format!("缺少必填字符串参数 `{k}`"))
         })
 }
 pub fn optional_str(a: &Value, k: &str) -> Option<String> {

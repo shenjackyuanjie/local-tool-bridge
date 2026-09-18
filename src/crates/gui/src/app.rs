@@ -325,11 +325,11 @@ impl BridgeApp {
         for (name, value) in endpoints {
             text.push_str(&format!("{name}: {value}\n"));
         }
-        text.push_str(&format!("Client ID: {}\n", credentials.client_id));
-        text.push_str(&format!("Client Secret: {}\n", credentials.client_secret));
-        text.push_str("Token endpoint auth: client_secret_post (client_secret_basic 也支持)\n");
-        text.push_str("Scopes: mcp offline_access\n");
-        text.push_str("Registration URL: 留空（使用用户自定义 OAuth 客户端）\n");
+        text.push_str(&format!("Client ID：{}\n", credentials.client_id));
+        text.push_str(&format!("Client Secret：{}\n", credentials.client_secret));
+        text.push_str("Token Endpoint 认证：client_secret_post（也支持 client_secret_basic）\n");
+        text.push_str("Scopes：mcp offline_access\n");
+        text.push_str("Registration URL：留空（使用用户自定义 OAuth 客户端）\n");
         ctx.copy_text(text);
         self.toast = Some(("完整 OAuth 配置已复制".into(), true));
     }

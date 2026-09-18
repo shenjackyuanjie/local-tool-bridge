@@ -1,4 +1,4 @@
-//! `ltb-host` — the local bridge process, as a library.
+//! `ltb-host` —— 作为 Library 使用的本地 Bridge 进程实现。
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -18,7 +18,7 @@ pub mod oauth;
 pub mod tunnel;
 pub mod websocket;
 
-/// Loads the policy document, falling back to the built-in default on failure.
+/// 读取策略文档；失败时回退到内置默认配置。
 pub fn load_policy(path: Option<&PathBuf>) -> Policy {
     let path = match path.cloned().or_else(policy_path) {
         Some(path) => path,
@@ -31,7 +31,7 @@ pub fn load_policy(path: Option<&PathBuf>) -> Policy {
                 tracing::error!(
                     path = %path.display(),
                     %error,
-                    "policy file is malformed; falling back to defaults"
+                    "策略文件格式错误，回退到默认配置"
                 );
                 Policy::default()
             }
@@ -41,31 +41,31 @@ pub fn load_policy(path: Option<&PathBuf>) -> Policy {
             tracing::error!(
                 path = %path.display(),
                 %error,
-                "failed to read policy; using defaults"
+                "读取策略失败，使用默认配置"
             );
             Policy::default()
         }
     }
 }
 
-/// Persists a policy document, creating the config directory as needed.
+/// 持久化策略文档，并在需要时创建配置目录。
 pub fn save_policy(policy: &Policy) -> Result<PathBuf> {
     let path = policy_path().ok_or_else(|| {
-        ltb_core::BridgeError::internal("No per-user config directory is available on this system")
+        ltb_core::BridgeError::internal("当前系统无法获取用户级配置目录")
     })?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            ltb_core::BridgeError::from_io("Failed to create the config directory", e)
+            ltb_core::BridgeError::from_io("创建配置目录失败", e)
         })?;
     }
     let json = serde_json::to_string_pretty(policy)
-        .map_err(|e| ltb_core::BridgeError::internal(format!("Failed to serialise policy: {e}")))?;
+        .map_err(|e| ltb_core::BridgeError::internal(format!("序列化策略失败: {e}")))?;
     std::fs::write(&path, json)
-        .map_err(|e| ltb_core::BridgeError::from_io("Failed to write the policy file", e))?;
+        .map_err(|e| ltb_core::BridgeError::from_io("写入策略文件失败", e))?;
     Ok(path)
 }
 
-/// Loads the persisted bridge secret, generating one on first run.
+/// 读取已持久化的 Bridge Secret；首次运行时自动生成。
 pub fn load_or_create_secret() -> std::io::Result<String> {
     let Some(dir) = ltb_core::config_dir() else {
         return Ok(uuid::Uuid::new_v4().to_string());
@@ -100,8 +100,8 @@ fn restrict_permissions(_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Builds a dispatcher from the on-disk configuration. Enabled external stdio MCP
-/// servers are discovered here, before the dispatcher is shared with transports.
+/// 根据磁盘配置构建调度器。已启用的外部 stdio MCP
+/// Server 会在这里完成发现，然后调度器再共享给各传输层。
 pub async fn build_dispatcher(
     policy_override: Option<PathBuf>,
     audit_enabled: bool,
@@ -158,9 +158,9 @@ pub async fn run_mcp(
     Ok(address)
 }
 
-/// Starts an opt-in Direct Remote MCP listener authenticated with a dedicated
-/// static Bearer token. Existing loopback/Tunnel behavior is separate and
-/// unchanged.
+/// 启动可选的 Direct Remote MCP listener，并使用独立的
+/// 静态 Bearer Token 认证。现有 loopback / Tunnel 路径彼此独立，
+/// 行为保持不变。
 pub async fn run_direct_mcp(
     bind: SocketAddr,
     dispatcher: Arc<Dispatcher>,
@@ -182,8 +182,8 @@ pub struct DirectMcpRunning {
     pub mcp_path: String,
 }
 
-/// Starts Direct MCP using the persisted GUI configuration. This is the entry
-/// point for OAuth and secret capability-URL modes.
+/// 使用 GUI 持久化配置启动 Direct MCP；这是 OAuth 与 Secret
+/// Capability URL 模式的统一入口。
 pub async fn run_configured_direct_mcp(
     config: &direct_mcp::DirectMcpConfig,
     dispatcher: Arc<Dispatcher>,
@@ -191,9 +191,9 @@ pub async fn run_configured_direct_mcp(
     let runtime = direct_mcp::build_runtime(config)?;
     let listener = mcp::bind_address(runtime.bind)
         .await
-        .map_err(|error| ltb_core::BridgeError::from_io("Failed to bind Direct MCP", error))?;
+        .map_err(|error| ltb_core::BridgeError::from_io("绑定 Direct MCP 监听地址失败", error))?;
     let address = listener.local_addr().map_err(|error| {
-        ltb_core::BridgeError::from_io("Failed to read Direct MCP address", error)
+        ltb_core::BridgeError::from_io("读取 Direct MCP 监听地址失败", error)
     })?;
     let mcp_path = runtime.mcp_path.clone();
     tokio::spawn(mcp::serve_at(
