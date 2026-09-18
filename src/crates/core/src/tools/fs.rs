@@ -134,6 +134,13 @@ impl Tool for ReadFile {
             lines[start_index..end_index].concat()
         };
 
+        // Record the exact on-disk snapshot only after the read and decode
+        // succeeded. apply_patch/write_file use this to reject blind or stale
+        // writes to existing files.
+        context
+            .read_tracker
+            .record(context.read_scope, &path, &bytes);
+
         let header = if line_numbers {
             format!(
                 "{} ({} lines total, showing {}-{})\n",
@@ -195,9 +202,10 @@ impl Tool for WriteFile {
         ToolDescriptor {
             name: "fs.write_file".into(),
             summary: "Create or overwrite a text file".into(),
-            description: "Writes text to a file, creating parent directories when needed. Always \
-                          requires explicit human approval because it destroys existing content \
-                          unless `mode` is `append`."
+            description: "Writes text to a file, creating parent directories when needed. Existing \
+                          files must first be read with read_file in the same session; a stale read \
+                          is rejected. Always requires explicit human approval because it destroys \
+                          existing content unless `mode` is `append`."
                 .into(),
             category: "fs".into(),
             mutating: true,
@@ -243,6 +251,15 @@ impl Tool for WriteFile {
         let existed_before = path.exists();
         let bytes_written = content.len();
 
+        if existed_before && mode != "create" {
+            let current = tokio::fs::read(&path)
+                .await
+                .map_err(|error| BridgeError::from_io("Failed to verify write target", error))?;
+            context
+                .read_tracker
+                .require_current(context.read_scope, &path, &current)?;
+        }
+
         match mode.as_str() {
             "overwrite" => {
                 tokio::fs::write(&path, content.as_bytes())
@@ -283,6 +300,8 @@ impl Tool for WriteFile {
                 )));
             }
         }
+
+        context.read_tracker.invalidate(context.read_scope, &path);
 
         let verb = if existed_before { "Updated" } else { "Created" };
         Ok(ToolOutput {

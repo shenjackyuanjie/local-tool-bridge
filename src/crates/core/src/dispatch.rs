@@ -21,7 +21,7 @@ use crate::audit::{AuditEntry, AuditLog, AuditOutcome, now_rfc3339, redact_argum
 use crate::error::{BridgeError, Result, code};
 use crate::policy::{Effect, Policy, PolicyEngine, Verdict};
 use crate::rpc::{Incoming, JsonRpcFailure, JsonRpcSuccess, PROTOCOL_VERSION};
-use crate::tools::{ToolContext, ToolRegistry};
+use crate::tools::{ReadBeforeWriteTracker, ToolContext, ToolRegistry};
 
 /// Methods a client may invoke.
 pub mod method {
@@ -121,6 +121,8 @@ pub struct Dispatcher {
     secret: Option<String>,
     /// Notifications the host wants to push, as a broadcast channel.
     events: tokio::sync::broadcast::Sender<Value>,
+    /// Successful read_file observations used to guard structured file writes.
+    read_tracker: ReadBeforeWriteTracker,
 }
 
 impl Dispatcher {
@@ -139,6 +141,7 @@ impl Dispatcher {
             authenticated: RwLock::new(false),
             secret,
             events,
+            read_tracker: ReadBeforeWriteTracker::default(),
         }))
     }
 
@@ -162,6 +165,10 @@ impl Dispatcher {
 
     pub async fn policy_snapshot(&self) -> Policy {
         self.policy.read().await.policy().clone()
+    }
+
+    pub fn clear_read_scope(&self, scope: &str) {
+        self.read_tracker.clear_scope(scope);
     }
 
     /// Swaps in a new policy document, bumping its revision.
@@ -416,10 +423,13 @@ impl Dispatcher {
             Duration::from_millis(policy_guard.default_timeout_ms()),
         );
 
+        let read_scope = conversation_id.as_deref().unwrap_or(&origin);
         let context = ToolContext {
             policy: &policy_guard,
             call_id: &call_id,
             origin: &origin,
+            read_tracker: &self.read_tracker,
+            read_scope,
         };
 
         let execution =

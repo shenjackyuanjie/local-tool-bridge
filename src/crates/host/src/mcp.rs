@@ -440,7 +440,7 @@ async fn handle(
             .to_string();
             return Ok(unauthorized_response(&auth, body));
         }
-        return handle_delete(request.headers(), &state);
+        return handle_delete(request.headers(), &state, &dispatcher);
     }
 
     if request.method() != Method::POST {
@@ -504,6 +504,7 @@ async fn handle(
 fn handle_delete(
     headers: &HeaderMap,
     state: &Arc<McpState>,
+    dispatcher: &Arc<Dispatcher>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let session_id = headers
         .get(SESSION_HEADER)
@@ -516,6 +517,9 @@ fn handle_delete(
         .unwrap_or(false);
 
     if removed {
+        if let Some(session_id) = session_id.as_deref() {
+            dispatcher.clear_read_scope(session_id);
+        }
         Ok(json_response(StatusCode::OK, "{}".into()))
     } else {
         Ok(json_response(
@@ -900,6 +904,8 @@ async fn handle_tools_call(
         .take(128)
         .collect();
 
+    let conversation_id = header_str(headers, SESSION_HEADER);
+
     // One dispatcher, one audit trail: the call is exactly what the extension
     // would have sent, with a synthetic id the caller never sees.
     let reply = dispatcher
@@ -913,6 +919,7 @@ async fn handle_tools_call(
                     "arguments": arguments,
                     "callId": uuid::Uuid::new_v4().to_string(),
                     "origin": origin,
+                    "conversationId": conversation_id,
                 })),
             }),
             PeerTrust::Untrusted,

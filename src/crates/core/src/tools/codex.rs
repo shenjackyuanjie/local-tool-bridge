@@ -149,8 +149,9 @@ impl Tool for ApplyPatch {
             name: "apply_patch".into(),
             summary: "Create, update, delete, or move files with a patch".into(),
             description: "Applies the Codex file-oriented patch format directly to the sandboxed \
-                          filesystem. Supported operations are Add File, Delete File, Update \
-                          File, and Update File with Move to."
+                          filesystem. Existing files must first be read with read_file in the same \
+                          session, and stale reads are rejected. Supported operations are Add File, \
+                          Delete File, Update File, and Update File with Move to."
                 .into(),
             category: "codex-filesystem".into(),
             mutating: true,
@@ -179,6 +180,32 @@ impl Tool for ApplyPatch {
             ));
         }
 
+        // Preflight every existing file touched by the patch before making any
+        // mutation. This prevents a multi-file patch from partially applying
+        // before discovering that a later target was never read.
+        for change in &changes {
+            match change {
+                PatchChange::Add { .. } => {}
+                PatchChange::Delete { path } => {
+                    require_prior_read(context, path).await?;
+                }
+                PatchChange::Update {
+                    path,
+                    move_to,
+                    ..
+                } => {
+                    require_prior_read(context, path).await?;
+                    if let Some(move_to) = move_to {
+                        let source = context.policy.sandbox().resolve(path, false)?;
+                        let target = context.policy.sandbox().resolve(move_to, false)?;
+                        if target != source && target.exists() {
+                            require_prior_read(context, move_to).await?;
+                        }
+                    }
+                }
+            }
+        }
+
         let mut applied = Vec::new();
         for change in changes {
             match change {
@@ -198,6 +225,7 @@ impl Tool for ApplyPatch {
                     tokio::fs::write(&path, content)
                         .await
                         .map_err(|e| BridgeError::from_io("Failed to add file", e))?;
+                    context.read_tracker.invalidate(context.read_scope, &path);
                     applied.push(format!("A {}", path.display()));
                 }
                 PatchChange::Delete { path } => {
@@ -211,6 +239,7 @@ impl Tool for ApplyPatch {
                     tokio::fs::remove_file(&path)
                         .await
                         .map_err(|e| BridgeError::from_io("Failed to delete file", e))?;
+                    context.read_tracker.invalidate(context.read_scope, &path);
                     applied.push(format!("D {}", path.display()));
                 }
                 PatchChange::Update {
@@ -241,6 +270,8 @@ impl Tool for ApplyPatch {
                             BridgeError::from_io("Failed to remove moved source", e)
                         })?;
                     }
+                    context.read_tracker.invalidate(context.read_scope, &path);
+                    context.read_tracker.invalidate(context.read_scope, &target);
                     applied.push(format!(
                         "U {}{}",
                         path.display(),
@@ -267,6 +298,28 @@ impl Tool for ApplyPatch {
             duration_ms: Some(started.elapsed().as_millis() as u64),
         })
     }
+}
+
+async fn require_prior_read(context: &ToolContext<'_>, raw_path: &str) -> Result<()> {
+    let path = context.policy.sandbox().resolve(raw_path, false)?;
+    if !path.exists() {
+        return Err(BridgeError::invalid_params(format!(
+            "Patch target does not exist: {}",
+            path.display()
+        )));
+    }
+    if path.is_dir() {
+        return Err(BridgeError::invalid_params(format!(
+            "Patch target is a directory: {}",
+            path.display()
+        )));
+    }
+    let current = tokio::fs::read(&path)
+        .await
+        .map_err(|error| BridgeError::from_io("Failed to verify patch target", error))?;
+    context
+        .read_tracker
+        .require_current(context.read_scope, &path, &current)
 }
 
 #[derive(Debug)]

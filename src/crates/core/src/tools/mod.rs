@@ -4,8 +4,10 @@ use crate::error::{BridgeError, Result};
 use crate::policy::PolicyEngine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
+use std::hash::Hasher;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 pub mod codex;
 pub mod fs;
@@ -124,10 +126,90 @@ impl ToolOutput {
         self
     }
 }
+/// Tracks which file contents the model has actually observed before a
+/// structured file-write tool is allowed to replace them.
+#[derive(Default)]
+pub struct ReadBeforeWriteTracker {
+    reads: Mutex<HashMap<String, HashMap<PathBuf, u64>>>,
+}
+
+impl ReadBeforeWriteTracker {
+    pub fn record(&self, scope: &str, path: &Path, bytes: &[u8]) {
+        let path = read_tracking_key(path);
+        let mut reads = self.reads.lock().expect("read-before-write lock poisoned");
+        reads
+            .entry(scope.to_string())
+            .or_default()
+            .insert(path, content_fingerprint(bytes));
+    }
+
+    pub fn require_current(
+        &self,
+        scope: &str,
+        path: &Path,
+        current_bytes: &[u8],
+    ) -> Result<()> {
+        let path = read_tracking_key(path);
+        let current = content_fingerprint(current_bytes);
+        let mut reads = self.reads.lock().expect("read-before-write lock poisoned");
+        let observed = reads
+            .get(scope)
+            .and_then(|scope_reads| scope_reads.get(&path))
+            .copied();
+
+        match observed {
+            None => Err(BridgeError::denied(format!(
+                "Refusing to modify `{}` before it has been read with read_file in this session.                  Read the file first, then retry the write.",
+                path.display()
+            ))),
+            Some(fingerprint) if fingerprint != current => {
+                if let Some(scope_reads) = reads.get_mut(scope) {
+                    scope_reads.remove(&path);
+                }
+                Err(BridgeError::denied(format!(
+                    "Refusing to modify `{}` because it changed since the last read_file call.                      Read the file again, then retry the write.",
+                    path.display()
+                )))
+            }
+            Some(_) => Ok(()),
+        }
+    }
+
+    pub fn invalidate(&self, scope: &str, path: &Path) {
+        let path = read_tracking_key(path);
+        let mut reads = self.reads.lock().expect("read-before-write lock poisoned");
+        if let Some(scope_reads) = reads.get_mut(scope) {
+            scope_reads.remove(&path);
+            if scope_reads.is_empty() {
+                reads.remove(scope);
+            }
+        }
+    }
+
+    pub fn clear_scope(&self, scope: &str) {
+        self.reads
+            .lock()
+            .expect("read-before-write lock poisoned")
+            .remove(scope);
+    }
+}
+
+fn read_tracking_key(path: &Path) -> PathBuf {
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn content_fingerprint(bytes: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write(bytes);
+    hasher.finish()
+}
+
 pub struct ToolContext<'a> {
     pub policy: &'a PolicyEngine,
     pub call_id: &'a str,
     pub origin: &'a str,
+    pub read_tracker: &'a ReadBeforeWriteTracker,
+    pub read_scope: &'a str,
 }
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
@@ -203,4 +285,89 @@ pub fn optional_bool(a: &Value, k: &str, d: bool) -> bool {
 }
 pub fn clamp_u64(v: u64, min: u64, max: u64) -> u64 {
     v.clamp(min, max)
+}
+
+
+#[cfg(test)]
+mod read_before_write_tests {
+    use super::*;
+
+    struct TempFile {
+        path: PathBuf,
+    }
+
+    impl TempFile {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+            let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "ltb-read-before-write-{}-{unique}.txt",
+                std::process::id()
+            ));
+            std::fs::write(&path, b"version=1\n").expect("failed to create temp file");
+            Self { path }
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    #[test]
+    fn write_requires_a_prior_read_in_the_same_scope() {
+        let file = TempFile::new();
+        let tracker = ReadBeforeWriteTracker::default();
+        let bytes = std::fs::read(&file.path).unwrap();
+
+        assert!(
+            tracker
+                .require_current("session-a", &file.path, &bytes)
+                .is_err()
+        );
+
+        tracker.record("session-a", &file.path, &bytes);
+        assert!(
+            tracker
+                .require_current("session-a", &file.path, &bytes)
+                .is_ok()
+        );
+        assert!(
+            tracker
+                .require_current("session-b", &file.path, &bytes)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn stale_reads_are_rejected_and_invalidated() {
+        let file = TempFile::new();
+        let tracker = ReadBeforeWriteTracker::default();
+        let original = std::fs::read(&file.path).unwrap();
+        tracker.record("session", &file.path, &original);
+
+        std::fs::write(&file.path, b"version=2\n").unwrap();
+        let changed = std::fs::read(&file.path).unwrap();
+        assert!(
+            tracker
+                .require_current("session", &file.path, &changed)
+                .is_err()
+        );
+
+        tracker.record("session", &file.path, &changed);
+        assert!(
+            tracker
+                .require_current("session", &file.path, &changed)
+                .is_ok()
+        );
+        tracker.invalidate("session", &file.path);
+        assert!(
+            tracker
+                .require_current("session", &file.path, &changed)
+                .is_err()
+        );
+    }
 }
